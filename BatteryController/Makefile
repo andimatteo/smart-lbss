@@ -1,19 +1,16 @@
 CONTIKI_PROJECT = battery_controller
 all: $(CONTIKI_PROJECT)
 
-TARGET_LDFLAGS += -Wl,-u,_printf_float
-
+# include CoAP module
 MODULES += os/net/app-layer/coap
+
+# include CoAP resource
+MODULES_REL += ./resources
+
+# include emlearn for ML inference
+TARGET_LIBFILES += -lm
 MODULES_REL += ../.venv/lib/python3.9/site-packages/emlearn
 INC += ../.venv/lib/python3.9/site-packages/emlearn
 
-MODULES += os/services/shell
-
-TARGET_LIBFILES += -lm
-
-PROJECT_SOURCEFILES += eml_net_stub.c
-
-CONTIKI = ../../../
+CONTIKI = ../../..
 include $(CONTIKI)/Makefile.include
-
-
