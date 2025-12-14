@@ -32,6 +32,7 @@ float beta  = 1.0f;
 float gama  = 20.0f;
 float price = 0.25f;
 
+#define FREQ_COMPUTING  CLOCK_SECOND * 5
 #define K_FACT          0.05f
 #define SOC_REF         0.5f
 #define LEARNING_RATE   0.1f
@@ -236,7 +237,6 @@ static void update_env() {
 }
 
 static void run_mpc() {
-    leds_on(LEDS_BLUE);
 
     LOG_INFO("\n");
     LOG_INFO("================MPC OPTIMIZATION==============\n");
@@ -346,7 +346,6 @@ static void run_mpc() {
         LOG_INFO_("(Export)\n");
     }
 
-    leds_off(LEDS_BLUE);
 }
 
 
@@ -414,12 +413,6 @@ PROCESS_THREAD(ugrid_controller, ev, data) {
     printf("%p\n", eml_error_str);
     printf("%p\n", eml_net_activation_function_strs);
 
-    printf("\n*** UGRID CONTROLLER STARTED ***\n");
-
-    LOG_INFO("[INIT] Waiting for network stack initialization...\n");
-    etimer_set(&et_compute, CLOCK_SECOND * 3);
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&et_compute));
-
     leds_on(LEDS_GREEN);
 
     coap_activate_resource(&res_register, "dev/register");
@@ -432,12 +425,13 @@ PROCESS_THREAD(ugrid_controller, ev, data) {
     LOG_INFO("[INIT] Ready to accept battery registrations\n");
     LOG_INFO("\n");
 
-    etimer_set(&et_compute, CLOCK_SECOND * 5);
+    etimer_set(&et_compute, FREQ_COMPUTING);
 
     while(1) {
         PROCESS_WAIT_EVENT();
 
         if(ev == PROCESS_EVENT_TIMER && data == &et_compute) {
+            leds_on(LEDS_BLUE);
             update_env(); 
             run_mpc(); 
 
@@ -485,6 +479,7 @@ PROCESS_THREAD(ugrid_controller, ev, data) {
             print_battery_status();
 
             etimer_reset(&et_compute);
+            leds_off(LEDS_BLUE);
         }
 
         /* Setup observe */
