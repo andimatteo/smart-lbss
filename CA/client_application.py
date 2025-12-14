@@ -32,7 +32,6 @@ STATUS_REFRESH_INTERVAL = 2.0  # secondi
 # Stima capacità energetica batteria (per ETA)
 BATTERY_ENERGY_KWH = 13.5
 
-
 # ---------------------------------------------------------------------------
 # STATO CONDIVISO
 # ---------------------------------------------------------------------------
@@ -45,7 +44,6 @@ alerts = deque(maxlen=100)  # (level, text)
 
 stop_event = threading.Event()
 
-
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
@@ -56,20 +54,17 @@ def rca_get(path: str, **kwargs):
     r.raise_for_status()
     return r.json()
 
-
 def rca_post(path: str, json_body: Optional[dict] = None):
     url = RCA_BASE_URL + path
     r = requests.post(url, json=json_body, timeout=5)
     r.raise_for_status()
     return r.json()
 
-
 def rca_delete(path: str):
     url = RCA_BASE_URL + path
     r = requests.delete(url, timeout=5)
     r.raise_for_status()
     return r.json()
-
 
 # ---------------------------------------------------------------------------
 # MQTT (alert asincroni)
@@ -83,7 +78,6 @@ def on_mqtt_connect(client, userdata, flags, rc):
     else:
         with alerts_lock:
             alerts.append(("ERROR", f"[MQTT] Errore connessione (rc={rc})"))
-
 
 def on_mqtt_message(client, userdata, msg):
     try:
@@ -101,7 +95,6 @@ def on_mqtt_message(client, userdata, msg):
     with alerts_lock:
         alerts.append((level, text))
 
-
 def start_mqtt_listener():
     client = mqtt.Client()
     client.on_connect = on_mqtt_connect
@@ -117,7 +110,6 @@ def start_mqtt_listener():
     t = threading.Thread(target=client.loop_forever, daemon=True)
     t.start()
     return client
-
 
 # ---------------------------------------------------------------------------
 # THREAD DI POLLING STATO
@@ -135,7 +127,6 @@ def poll_status_loop():
                 alerts.append(("ERROR", f"[RCA] Errore lettura /api/status: {e}"))
         time.sleep(STATUS_REFRESH_INTERVAL)
 
-
 # ---------------------------------------------------------------------------
 # UTILITY PER COLORI / ETA
 # ---------------------------------------------------------------------------
@@ -151,17 +142,11 @@ def init_colors():
     curses.init_pair(5, curses.COLOR_MAGENTA, -1) # COMMAND / STATUS
     curses.init_pair(6, curses.COLOR_BLUE, -1)    # LOAD/PV/Grid
 
-
 def draw_header(stdscr, max_x):
-    title = " Smart LBSS – Interactive Control & Monitoring "
+    title = " Smart LBSS"
     stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
     stdscr.addstr(0, max_x // 2 - len(title) // 2, title)
     stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
-
-    stdscr.attron(curses.color_pair(6))
-    stdscr.addstr(1, 2, f"RCA: {RCA_BASE_URL}   MQTT: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
-    stdscr.attroff(curses.color_pair(6))
-
 
 def soc_color_pair(soc: Optional[float]) -> int:
     if soc is None:
@@ -172,7 +157,6 @@ def soc_color_pair(soc: Optional[float]) -> int:
         return 2
     return 3
 
-
 def temp_color_pair(temp: Optional[float]) -> int:
     if temp is None:
         return 0
@@ -181,7 +165,6 @@ def temp_color_pair(temp: Optional[float]) -> int:
     if temp > 45.0:
         return 2
     return 1
-
 
 def soh_color_pair(soh: Optional[float]) -> int:
     if soh is None:
@@ -194,13 +177,12 @@ def soh_color_pair(soh: Optional[float]) -> int:
 
 def power_flow_symbol(p: Optional[float]) -> str:
     if p is None:
-        return " ? "
+        return "?"
     if p > 0.05:
         return "←"  # batteria assorbe (carica)
     if p < -0.05:
         return "→"  # batteria eroga (scarica)
     return "·"
-
 
 def estimate_eta_seconds(
     soc: Optional[float],
@@ -209,12 +191,6 @@ def estimate_eta_seconds(
     obj_tgt: Optional[float],
     energy_kwh: float = BATTERY_ENERGY_KWH,
 ) -> Optional[int]:
-    """
-    Stima molto grezza dell'ETA (in secondi) per arrivare al setpoint:
-    - obj_mode == full_discharge → target ≈ 5% SoC
-    - obj_mode == target_soc    → target = obj_tgt
-    - se potenza incoerente col target o nulla → None
-    """
     if soc is None or power_kw is None or abs(power_kw) < 0.01:
         return None
 
@@ -229,8 +205,7 @@ def estimate_eta_seconds(
     if abs(delta) < 1e-3:
         return 0
 
-    # verifica che la potenza stia andando nella direzione giusta
-    # power_kw > 0 → carica, power_kw < 0 → scarica (coerente con RCA)
+    # power_kw > 0 → carica, power_kw < 0 → scarica
     if (delta > 0 and power_kw <= 0) or (delta < 0 and power_kw >= 0):
         return None
 
@@ -238,21 +213,46 @@ def estimate_eta_seconds(
     time_h = energy_needed_kwh / max(0.01, abs(power_kw))
     return int(time_h * 3600)
 
-
 def format_eta(eta_sec: Optional[int]) -> str:
     if eta_sec is None:
-        return "   n/a"
+        return "n/a"
     if eta_sec <= 0:
-        return "  done"
+        return "done"
     if eta_sec < 3600:
         m = eta_sec // 60
-        return f"{int(m):3d}m"
+        return f"{int(m)}m"
     h = eta_sec // 3600
     m = (eta_sec % 3600) // 60
     if h < 10:
         return f"{int(h)}h{int(m):02d}"
     return f"{int(h)}h+"
 
+# ---------------------------------------------------------------------------
+# TABLE LAYOUT (fixed widths)
+# ---------------------------------------------------------------------------
+
+TABLE_HEADER = " idx |  SoC% |  SoH% | Temp |   P[kW] |  u*[kW] |  St |   Obj    |  ETA  | ts"
+TABLE_SEP = "-" * len(TABLE_HEADER)
+
+# Fixed offsets (relative to the beginning of the table line, i.e., column where idx starts)
+# These are used to re-apply colors to SoC/SoH/Temp cells after printing the full row.
+# They match the format used in ROW_FMT below.
+OFF_SOC  = 6    # start of SoC cell
+OFF_SOH  = 14   # start of SoH cell
+OFF_TEMP = 22   # start of Temp cell
+
+ROW_FMT = (
+    "{idx:>4} |"
+    "{soc:>6} |"
+    "{soh:>6} |"
+    "{temp:>5} |"
+    "{p:>7} {sym} |"
+    "{u:>7} |"
+    "{st:>4} |"
+    "{obj:>8} |"
+    "{eta:>5} |"
+    " {ts}"
+)
 
 # ---------------------------------------------------------------------------
 # RENDERING TUI
@@ -279,14 +279,16 @@ def draw_status_panel(stdscr, start_y, max_y, max_x):
         price = info.get("price_eur_per_kwh")
 
         # header uGrid
+        title = f"uGrid {ugrid_id}"
         stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
-        stdscr.addstr(y, 2, f"uGrid {ugrid_id}")
+        stdscr.addstr(y, 2, title)
         stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
 
+        x_info = 2 + len(title) + 2
         line_used = 1
 
-        # riga PV / Load / Grid
-        if load_kw is not None and pv_kw is not None:
+        # PV / Load / Grid line (aligned after title)
+        if load_kw is not None and pv_kw is not None and x_info < max_x - 2:
             stdscr.attron(curses.color_pair(6))
             s = f"☀ PV: {pv_kw:.2f} kW   ⚡ Load: {load_kw:.2f} kW"
             if grid_kw is not None:
@@ -300,56 +302,55 @@ def draw_status_panel(stdscr, start_y, max_y, max_x):
                     direction = "eq"
                     arrow = "·"
                 s += f"   {arrow} Grid: {grid_kw:+.2f} kW ({direction})"
-            stdscr.addstr(y, 15, s[:max_x - 20])
+            stdscr.addstr(y, x_info, s[: max_x - x_info - 1])
             stdscr.attroff(curses.color_pair(6))
             line_used += 1
 
-        # riga €/h
+        # €/h line (aligned under the PV/Load/Grid line)
         if grid_kw is not None and profit_rate is not None and price is not None:
             py = y + 1
-            if py < max_y - 5:
+            if py < max_y - 5 and x_info < max_x - 2:
                 if profit_rate < 0:
-                    cp = 3  # stiamo pagando
+                    cp = 3
                 elif profit_rate > 0:
-                    cp = 1  # stiamo guadagnando
+                    cp = 1
                 else:
-                    cp = 2  # neutro
+                    cp = 2
                 stdscr.attron(curses.color_pair(cp))
                 s2 = f"€/h: {profit_rate:+.3f}   (price ≈ {price:.3f} €/kWh)"
-                stdscr.addstr(py, 15, s2[:max_x - 20])
+                stdscr.addstr(py, x_info, s2[: max_x - x_info - 1])
                 stdscr.attroff(curses.color_pair(cp))
                 line_used += 1
 
         y += line_used
 
-        # intestazione tabella batterie (con Obj / ETA)
-        header = " idx | SoC% | SoH% | Temp |  P[kW] | u*[kW] | St  |   Obj    |   ETA   | ts"
-        stdscr.addstr(y, 4, header[:max_x - 8])
+        # Battery table header
+        stdscr.addstr(y, 4, TABLE_HEADER[: max_x - 8])
         y += 1
-        stdscr.addstr(y, 4, "-" * min(len(header), max_x - 8))
+        stdscr.addstr(y, 4, TABLE_SEP[: max_x - 8])
         y += 1
 
-        bats = sorted(info.get("batteries", []), key=lambda x: x["index"])
+        bats = sorted(info.get("batteries", []), key=lambda x: x.get("index", 0))
         for b in bats:
             if y >= max_y - 5:
                 break
-            idx = b["index"]
-            soc = b["soc"]
-            soh = b["soh"]
-            temp = b["temperature"]
-            power = b["power_kw"]
-            u_opt = b["optimal_u_kw"]
-            state = b.get("state") or "???"
-            ts = b.get("ts", "")[:19]
 
-            # obiettivo (se l'RCA lo esporta nello status)
+            idx = int(b.get("index", 0))
+            soc = b.get("soc")
+            soh = b.get("soh")
+            temp = b.get("temperature")
+            power = b.get("power_kw")
+            u_opt = b.get("optimal_u_kw")
+            state = (b.get("state") or "???")[:4]
+            ts = (b.get("ts", "") or "")[:19]
+
             obj_mode = b.get("objective_mode")
             obj_tgt = b.get("objective_target_soc")
 
             if obj_mode == "full_discharge":
                 obj_str = "FD"
             elif obj_mode == "target_soc" and obj_tgt is not None:
-                obj_str = f"TS {obj_tgt*100:.0f}%"
+                obj_str = f"TS{obj_tgt*100:.0f}%"
             elif obj_mode == "detach":
                 obj_str = "DET"
             elif obj_mode:
@@ -360,61 +361,57 @@ def draw_status_panel(stdscr, start_y, max_y, max_x):
             eta_sec = estimate_eta_seconds(soc, power, obj_mode, obj_tgt)
             eta_str = format_eta(eta_sec)
 
-            # base row
-            row = f" {idx:>3} |"
-            stdscr.addstr(y, 4, row)
+            soc_str = "n/a" if soc is None else f"{soc*100:5.1f}"
+            soh_str = "n/a" if soh is None else f"{soh*100:5.1f}"
+            temp_str = "n/a" if temp is None else f"{temp:4.1f}"
+            p_str = "n/a" if power is None else f"{power:7.2f}"
+            u_str = "n/a" if u_opt is None else f"{u_opt:7.2f}"
+            sym = power_flow_symbol(power)
 
-            # SoC colorato
-            soc_str = "  n/a " if soc is None else f"{soc*100:6.1f}"
+            line = ROW_FMT.format(
+                idx=idx,
+                soc=soc_str,
+                soh=soh_str,
+                temp=temp_str,
+                p=p_str,
+                sym=sym,
+                u=u_str,
+                st=state,
+                obj=obj_str[:8],
+                eta=eta_str[:5],
+                ts=ts,
+            )
+
+            # Print base line
+            stdscr.addstr(y, 4, line[: max_x - 8])
+
+            # Re-apply colors on SoC/SoH/Temp cells (fixed offsets)
+            # SoC
             scp = soc_color_pair(soc)
             if scp:
                 stdscr.attron(curses.color_pair(scp) | curses.A_BOLD)
-            stdscr.addstr(y, 4 + len(row), soc_str)
-            if scp:
+                stdscr.addstr(y, 4 + OFF_SOC, f"{soc_str:>6}"[:6])
                 stdscr.attroff(curses.color_pair(scp) | curses.A_BOLD)
 
             # SoH
-            x_soh = 4 + len(row) + 1 + len(soc_str)
-            soh_str = "  n/a " if soh is None else f"{soh*100:6.1f}"
             shp = soh_color_pair(soh)
             if shp:
                 stdscr.attron(curses.color_pair(shp))
-            stdscr.addstr(y, x_soh, soh_str)
-            if shp:
+                stdscr.addstr(y, 4 + OFF_SOH, f"{soh_str:>6}"[:6])
                 stdscr.attroff(curses.color_pair(shp))
 
             # Temp
-            x_temp = x_soh + 1 + len(soh_str)
-            temp_str = " n/a " if temp is None else f"{temp:5.1f}"
             tp = temp_color_pair(temp)
             if tp:
                 stdscr.attron(curses.color_pair(tp))
-            stdscr.addstr(y, x_temp, temp_str)
-            if tp:
+                stdscr.addstr(y, 4 + OFF_TEMP, f"{temp_str:>5}"[:5])
                 stdscr.attroff(curses.color_pair(tp))
-
-            # Power
-            x_p = x_temp + 1 + len(temp_str)
-            p_str = " n/a " if power is None else f"{power:6.2f}"
-            sym = power_flow_symbol(power)
-            stdscr.addstr(y, x_p, p_str + f" {sym}")
-
-            # u*
-            x_u = x_p + len(p_str) + 4
-            u_str = " n/a " if u_opt is None else f"{u_opt:6.2f}"
-            stdscr.addstr(y, x_u, u_str)
-
-            # State, Obj, ETA e ts
-            x_state = x_u + len(u_str) + 2
-            tail = f"{state:>4} {obj_str:>8} | {eta_str:>8} | {ts}"
-            stdscr.addstr(y, x_state, tail[:max_x - x_state - 1])
 
             y += 1
 
         y += 1  # spazio tra ugrid
 
     return y
-
 
 def draw_alerts_panel(stdscr, start_y, max_y, max_x):
     y = start_y
@@ -445,15 +442,15 @@ def draw_alerts_panel(stdscr, start_y, max_y, max_x):
             cp = 3
         else:
             cp = 1
-        stdscr.attron(curses.color_pair(cp))
+
         prefix = f"[{lvl}] "
+        stdscr.attron(curses.color_pair(cp))
         stdscr.addstr(y, 2, prefix)
         stdscr.attroff(curses.color_pair(cp))
-        stdscr.addstr(y, 2 + len(prefix), text[:max_x - 4 - len(prefix)])
+        stdscr.addstr(y, 2 + len(prefix), text[: max_x - 4 - len(prefix)])
         y += 1
 
     return y
-
 
 def draw_command_line(stdscr, cmd_buffer: str, status_msg: str):
     max_y, max_x = stdscr.getmaxyx()
@@ -464,7 +461,7 @@ def draw_command_line(stdscr, cmd_buffer: str, status_msg: str):
 
     if status_msg:
         stdscr.attron(curses.color_pair(5))
-        stdscr.addstr(y_status, 2, status_msg[:max_x - 4])
+        stdscr.addstr(y_status, 2, status_msg[: max_x - 4])
         stdscr.attroff(curses.color_pair(5))
     else:
         stdscr.addstr(y_status, 2, " " * (max_x - 4))
@@ -479,7 +476,6 @@ def draw_command_line(stdscr, cmd_buffer: str, status_msg: str):
     stdscr.addstr(y_cmd, 2 + len(prompt), " " * max_input_len)
     stdscr.addstr(y_cmd, 2 + len(prompt), visible)
     stdscr.move(y_cmd, 2 + len(prompt) + len(visible))
-
 
 # ---------------------------------------------------------------------------
 # PARSING COMANDI
@@ -496,7 +492,6 @@ HELP_TEXT = (
     "  pullalerts [N]            recupera ultimi N alert da /api/alerts\n"
     "  quit / exit               esce\n"
 )
-
 
 def run_command(cmd: str) -> Tuple[str, bool]:
     parts = cmd.strip().split()
@@ -575,8 +570,8 @@ def run_command(cmd: str) -> Tuple[str, bool]:
             if not data:
                 return "Nessun alert nel DB.", False
             for a in reversed(data):
-                level = a["level"].upper()
-                text = f"{a['ts']} {a['ugrid_id']}/bat{a['battery_index']}: {a['message']}"
+                level = str(a.get("level", "info")).upper()
+                text = f"{a.get('ts','')} {a.get('ugrid_id','?')}/bat{a.get('battery_index','?')}: {a.get('message','')}"
                 with alerts_lock:
                     alerts.append((level, text))
             return f"{len(data)} alert caricati dal DB.", False
@@ -585,7 +580,6 @@ def run_command(cmd: str) -> Tuple[str, bool]:
 
     except Exception as e:
         return f"Errore eseguendo '{c}': {e}", False
-
 
 # ---------------------------------------------------------------------------
 # MAIN CURSES LOOP
@@ -636,7 +630,6 @@ def tui_main(stdscr):
 
     stop_event.set()
 
-
 def main():
     poller = threading.Thread(target=poll_status_loop, daemon=True)
     poller.start()
@@ -644,7 +637,6 @@ def main():
     start_mqtt_listener()
 
     curses.wrapper(tui_main)
-
 
 if __name__ == "__main__":
     main()
