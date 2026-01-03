@@ -1,14 +1,3 @@
-# !/usr/bin/env python3
-"""
-Remote Control Application (RCA) – Smart LBSS Demo
-Versione modificata per usare CoAPthon3 (Sincrono) invece di aiocoap.
-
-- HTTP REST API (Flask)
-- CoAP client (CoAPthon3) verso uGridController e BatteryController
-- Persistenza dati in MySQL
-- Pubblica alert asincroni su MQTT
-"""
-
 import json
 import logging
 import signal
@@ -22,19 +11,9 @@ from typing import Optional, Dict, Any, Tuple, Union
 from flask import Flask, jsonify, request, abort
 import mysql.connector
 import paho.mqtt.client as mqtt
-
-# --- COAPTHON IMPORTS ---
-try:
-    from coapthon.client.helperclient import HelperClient
-    from coapthon import defines
-except ImportError:
-    print("Errore: CoAPthon3 non installato. Esegui: pip install CoAPthon3")
-    sys.exit(1)
-
-try:
-    import cbor2  # pip install cbor2
-except Exception:
-    cbor2 = None
+from coapthon.client.helperclient import HelperClient
+from coapthon import defines
+import cbor2
 
 # ---------------------------------------------------------------------------
 # CONFIGURAZIONE
@@ -55,8 +34,6 @@ MQTT_BROKER_HOST = "localhost"
 MQTT_BROKER_PORT = 1883
 MQTT_ALERT_TOPIC_BASE = "ugrid/alerts"
 
-# CoAP / uGrid
-# Mappa logica: ID uGrid -> config
 UGRIDS = {
     "ug1": {
         "coap_state_uri": "coap://[fd00::f6ce:36ac:9afa:6be2]/dev/state",
@@ -65,20 +42,12 @@ UGRIDS = {
 
 # Polling
 POLL_INTERVAL_SEC = 5.0
-
-# CoAP Content-Format (Registry IANA)
 CONTENT_FORMAT_CBOR = 60  
 CONTENT_FORMAT_JSON = 50  
-
-# Prezzo energia (€/kWh)
 ENERGY_PRICE_EUR_PER_KWH = 0.25
-
-# Soglie per alert
 SOC_LOW_WARNING = 0.15      
 SOH_LOW_CRITICAL = 0.80     
 TEMP_HIGH_CRITICAL = 50.0  
-
-# Limiti hard per gli obiettivi (kW)
 MAX_CHARGE_POWER_KW = 5.0   
 MAX_DISCH_POWER_KW  = -5.0  
 
@@ -185,10 +154,6 @@ def init_database():
 # ---------------------------------------------------------------------------
 
 def _parse_coap_uri(uri: str) -> Tuple[str, int, str]:
-    """
-    Estrae host, porta e path da una URI coap://...
-    Gestisce IPv6 tra parentesi quadre.
-    """
     parsed = urlparse(uri)
     host = parsed.hostname
     port = parsed.port or 5683
@@ -198,29 +163,17 @@ def _parse_coap_uri(uri: str) -> Tuple[str, int, str]:
     return host, port, path
 
 def coap_get(uri: str, timeout: float = 5.0) -> Tuple[bytes, Optional[int]]:
-    """
-    Esegue una GET bloccante usando CoAPthon HelperClient.
-    Ritorna (payload_bytes, content_format).
-    """
     host, port, path = _parse_coap_uri(uri)
     client = None
     try:
-        # HelperClient gestisce la socket
         client = HelperClient(server=(host, port))
-        
-        # Nota: HelperClient di base non permette facilmente di settare l'Option Accept
-        # in modo pulito nell'API 'get'. Ci affidiamo al fatto che il server
-        # ritorni JSON o CBOR e noi facciamo il parsing tentativo.
         response = client.get(path, timeout=timeout)
         
         if response:
-            # CoAPthon ritorna il payload come bytes o stringa a seconda dei casi.
-            # Convertiamo in bytes per sicurezza.
             payload = response.payload
             if isinstance(payload, str):
                 payload = payload.encode('utf-8')
             
-            # Content-Format è un int nell'header (se presente)
             cf = response.content_type
             return payload, cf
         else:
@@ -234,16 +187,10 @@ def coap_get(uri: str, timeout: float = 5.0) -> Tuple[bytes, Optional[int]]:
             client.stop()
 
 def coap_put(uri: str, payload: bytes, timeout: float = 5.0) -> bytes:
-    """
-    Esegue una PUT bloccante usando CoAPthon HelperClient.
-    """
     host, port, path = _parse_coap_uri(uri)
     client = None
     try:
         client = HelperClient(server=(host, port))
-        
-        # HelperClient.put vuole il payload. Se è JSON, passiamo stringa o bytes.
-        # CoAPthon gestisce il payload.
         response = client.put(path, payload, timeout=timeout)
         
         if response:
@@ -268,15 +215,8 @@ def coap_put(uri: str, payload: bytes, timeout: float = 5.0) -> bytes:
 def ugrid_obj_uri(ugrid_id: str) -> str:
     cfg = UGRIDS[ugrid_id]
     state_uri = cfg["coap_state_uri"]
-    # Ricostruiamo la base URI per puntare a /ctrl/obj
     host, port, _ = _parse_coap_uri(state_uri)
     
-    # Se IPv6, urlparse rimuove le quadre, ma per ricostruire la stringa URI
-    # standard per i log o uso interno, potremmo rimetterle se necessario.
-    # Tuttavia, i nostri helper coap_put usano _parse_coap_uri internamente,
-    # quindi basta passare una stringa valida.
-    
-    # Costruiamo stringa formato: coap://[host]:port/ctrl/obj
     if ":" in host and not host.startswith("["):
         host_str = f"[{host}]"
     else:
@@ -301,7 +241,6 @@ def clear_ugrid_objective(ugrid_id: str, battery_index: int):
 # ---------------------------------------------------------------------------
 
 def _decode_state_from_cbor(obj: Any) -> Dict[str, Any]:
-    # (Identica alla versione precedente)
     if not isinstance(obj, dict):
         raise ValueError("CBOR root non è una mappa")
     if any(isinstance(k, str) for k in obj.keys()):
@@ -339,7 +278,6 @@ def decode_ugrid_state(payload: bytes, content_format: Optional[int]) -> Dict[st
         obj = cbor2.loads(payload)
         return _decode_state_from_cbor(obj)
     
-    # Fallback JSON o detect
     try:
         return json.loads(payload.decode("utf-8"))
     except Exception:
@@ -421,7 +359,7 @@ class RCA:
         }
         self.latest_batt_extra: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
-    # --- DB Helpers (Upsert/Insert identici al codice originale) ---
+    # --- DB Helpers ------------------------------------------------
     def insert_telemetry(self, ugrid_id, battery_index, row):
         with self.db_lock:
             conn = get_mysql_connection(DB_NAME)
@@ -744,7 +682,7 @@ class RCA:
 rca = RCA()
 
 # ---------------------------------------------------------------------------
-# API HTTP (Flask) - Resto invariato ma senza riferimenti async
+# API HTTP (Flask)                                              
 # ---------------------------------------------------------------------------
 
 @app.route("/api/status", methods=["GET"])
@@ -836,6 +774,7 @@ def main():
     init_database()
     rca.start()
     
+    # ctrl+C handler
     def handle_sig(sig, frame):
         logger.info("Arresto RCA...")
         rca.stop()

@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-Client Application (interactive TUI) per Smart LBSS demo.
-
-- Dashboard a colori con aggiornamento periodico dello stato
-- Frecce e simboli per i flussi di potenza
-- Pannello alert (asincroni via MQTT + da RCA)
-- Riga comandi in basso per inviare azioni all'RCA
-"""
-
 import json
 import threading
 import time
@@ -22,14 +12,11 @@ import paho.mqtt.client as mqtt
 # CONFIG
 # ---------------------------------------------------------------------------
 
-RCA_BASE_URL = "http://localhost:3000"  # cambia se la tua RCA è su un'altra porta
+RCA_BASE_URL = "http://localhost:3000"
 MQTT_BROKER_HOST = "localhost"
 MQTT_BROKER_PORT = 1883
 MQTT_ALERT_TOPIC = "ugrid/alerts/#"
-
-STATUS_REFRESH_INTERVAL = 2.0  # secondi
-
-# Stima capacità energetica batteria (per ETA)
+STATUS_REFRESH_INTERVAL = 2.0
 BATTERY_ENERGY_KWH = 13.5
 
 # ---------------------------------------------------------------------------
@@ -143,7 +130,7 @@ def init_colors():
     curses.init_pair(6, curses.COLOR_BLUE, -1)    # LOAD/PV/Grid
 
 def draw_header(stdscr, max_x):
-    title = " Smart LBSS"
+    title = "Smart LBSS"
     stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
     stdscr.addstr(0, max_x // 2 - len(title) // 2, title)
     stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
@@ -234,9 +221,6 @@ def format_eta(eta_sec: Optional[int]) -> str:
 TABLE_HEADER = " idx |  SoC% |  SoH% | Temp |   P[kW] |  u*[kW] |  St |   Obj    |  ETA  | ts"
 TABLE_SEP = "-" * len(TABLE_HEADER)
 
-# Fixed offsets (relative to the beginning of the table line, i.e., column where idx starts)
-# These are used to re-apply colors to SoC/SoH/Temp cells after printing the full row.
-# They match the format used in ROW_FMT below.
 OFF_SOC  = 6    # start of SoC cell
 OFF_SOH  = 14   # start of SoH cell
 OFF_TEMP = 22   # start of Temp cell
